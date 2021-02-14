@@ -629,7 +629,7 @@ add_subdirectory(PlugIns)
 add_subdirectory(Components)
 
 # Setup tests (before samples so that PlayPen is included in browser)
-if (OGRE_BUILD_TESTS AND 0)
+if (OGRE_BUILD_TESTS)
   # enable CTest
   ENABLE_TESTING()
   INCLUDE(CTest)
