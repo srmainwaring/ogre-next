@@ -23,6 +23,8 @@
 #include "OgreOverlaySystem.h"
 #include "OgreOverlayManager.h"
 
+#include "OgrePlatformInformation.h"
+
 #include "OgreTextureGpuManager.h"
 
 #include "OgreWindowEventUtilities.h"
