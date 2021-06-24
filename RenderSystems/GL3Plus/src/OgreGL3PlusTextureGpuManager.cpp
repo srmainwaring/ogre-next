@@ -30,6 +30,7 @@ THE SOFTWARE.
 #include "OgreGL3PlusMappings.h"
 #include "OgreGL3PlusTextureGpu.h"
 #include "OgreGL3PlusTextureGpuWindow.h"
+#include "OgreGL3PlusLegacy.h"
 #include "OgreGL3PlusStagingTexture.h"
 #include "OgreGL3PlusAsyncTextureTicket.h"
 #include "OgreGL3PlusSupport.h"
@@ -48,6 +49,22 @@ namespace Ogre
                                                         const GL3PlusSupport &support ) :
         TextureGpuManager( vaoManager, renderSystem ),
         mSupport( support )
+    {
+        _initialise();
+    }
+    //-----------------------------------------------------------------------------------
+    GL3PlusTextureGpuManager::~GL3PlusTextureGpuManager()
+    {
+        destroyAll();
+
+        OCGE( glDeleteFramebuffers( 2u, mTmpFbo ) );
+        memset( mTmpFbo, 0, sizeof(mTmpFbo) );
+
+        OCGE( glDeleteTextures( TextureTypes::Type3D - 1u, &mBlankTexture[1u] ) );
+        memset( mBlankTexture, 0, sizeof(mBlankTexture) );
+    }
+    //-----------------------------------------------------------------------------------
+    void GL3PlusTextureGpuManager::_initialise()
     {
         memset( mBlankTexture, 0, sizeof(mBlankTexture) );
         memset( mTmpFbo, 0, sizeof(mTmpFbo) );
@@ -73,6 +90,11 @@ namespace Ogre
         memset( c_whiteData, 0xff, sizeof( c_whiteData ) );
         memset( c_blackData, 0x00, sizeof( c_blackData ) );
 
+        // check capabilities
+        auto &support = getGlSupport();
+        bool hasGL42 = support.hasMinGLVersion(4, 2);
+        bool hasARBTextureStorage = support.checkExtension("GL_ARB_texture_storage");
+
         for( int i=1; i<=TextureTypes::Type3D; ++i )
         {
             OCGE( glBindTexture( targets[i], mBlankTexture[i] ) );
@@ -85,63 +107,105 @@ namespace Ogre
             OCGE( glTexParameteri( targets[i], GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE ) );
             OCGE( glTexParameteri( targets[i], GL_TEXTURE_MAX_LEVEL, 0 ) );
 
-            switch( i )
+            if (hasGL42 || hasARBTextureStorage)
             {
-            case TextureTypes::Unknown:
-                OGRE_EXCEPT( Exception::ERR_INVALID_STATE, "Ogre should never hit this path",
-                             "GL3PlusTextureGpuManager::GL3PlusTextureGpuManager" );
-                break;
-            case TextureTypes::Type1D:
-                OCGE( glTexStorage1D( targets[i], 1, GL_RGBA8, 4 ) );
-                OCGE( glTexSubImage1D( targets[i], 0, 0, 4, GL_RGBA,
-                                       GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
-                break;
-            case TextureTypes::Type1DArray:
-                OCGE( glTexStorage2D( targets[i], 1, GL_RGBA8, 4, 1 ) );
-                OCGE( glTexSubImage2D( targets[i], 0, 0, 0, 4, 1, GL_RGBA,
-                                       GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
-                break;
-            case TextureTypes::Type2D:
-                OCGE( glTexStorage2D( targets[i], 1, GL_RGBA8, 4, 4 ) );
-                OCGE( glTexSubImage2D( targets[i], 0, 0, 0, 4, 4, GL_RGBA,
-                                       GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
-                break;
-            case TextureTypes::TypeCube:
-                OCGE( glTexStorage2D( targets[i], 1, GL_RGBA8, 4, 4 ) );
-                for( int j=0; j<6; ++j )
+                switch( i )
                 {
-                    OCGE( glTexSubImage2D( GL_TEXTURE_CUBE_MAP_POSITIVE_X + j, 0, 0, 0, 4, 4, GL_RGBA,
+                case TextureTypes::Unknown:
+                    OGRE_EXCEPT( Exception::ERR_INVALID_STATE, "Ogre should never hit this path",
+                                "GL3PlusTextureGpuManager::initialise" );
+                    break;
+                case TextureTypes::Type1D:
+                    OCGE( glTexStorage1D( targets[i], 1, GL_RGBA8, 4 ) );
+                    OCGE( glTexSubImage1D( targets[i], 0, 0, 4, GL_RGBA,
+                                           GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
+                    break;
+                case TextureTypes::Type1DArray:
+                    OCGE( glTexStorage2D( targets[i], 1, GL_RGBA8, 4, 1 ) );
+                    OCGE( glTexSubImage2D( targets[i], 0, 0, 0, 4, 1, GL_RGBA,
+                                           GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
+                    break;
+                case TextureTypes::Type2D:
+                    OCGE( glTexStorage2D( targets[i], 1, GL_RGBA8, 4, 4 ) );
+                    OCGE( glTexSubImage2D( targets[i], 0, 0, 0, 4, 4, GL_RGBA,
+                                           GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
+                    break;
+                case TextureTypes::TypeCube:
+                    OCGE( glTexStorage2D( targets[i], 1, GL_RGBA8, 4, 4 ) );
+                    for( int j=0; j<6; ++j )
+                    {
+                        OCGE( glTexSubImage2D( GL_TEXTURE_CUBE_MAP_POSITIVE_X + j, 0, 0, 0, 4, 4, GL_RGBA,
+                                               GL_UNSIGNED_INT_8_8_8_8_REV, c_blackData ) );
+                    }
+                    break;
+                case TextureTypes::TypeCubeArray:
+                    OCGE( glTexStorage3D( targets[i], 1, GL_RGBA8, 4, 4, 6 ) );
+                    OCGE( glTexSubImage3D( targets[i], 0, 0, 0, 0, 4, 4, 6, GL_RGBA,
                                            GL_UNSIGNED_INT_8_8_8_8_REV, c_blackData ) );
+                    break;
+                case TextureTypes::Type2DArray:
+                case TextureTypes::Type3D:
+                    OCGE( glTexStorage3D( targets[i], 1, GL_RGBA8, 4, 4, 4 ) );
+                    OCGE( glTexSubImage3D( targets[i], 0, 0, 0, 0, 4, 4, 4, GL_RGBA,
+                                           GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
+                    break;
                 }
-                break;
-            case TextureTypes::TypeCubeArray:
-                OCGE( glTexStorage3D( targets[i], 1, GL_RGBA8, 4, 4, 6 ) );
-                OCGE( glTexSubImage3D( targets[i], 0, 0, 0, 0, 4, 4, 6, GL_RGBA,
-                                       GL_UNSIGNED_INT_8_8_8_8_REV, c_blackData ) );
-                break;
-            case TextureTypes::Type2DArray:
-            case TextureTypes::Type3D:
-                OCGE( glTexStorage3D( targets[i], 1, GL_RGBA8, 4, 4, 4 ) );
-                OCGE( glTexSubImage3D( targets[i], 0, 0, 0, 0, 4, 4, 4, GL_RGBA,
-                                       GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
-                break;
+            }
+            else
+            {
+                switch( i )
+                {
+                case TextureTypes::Unknown:
+                    OGRE_EXCEPT( Exception::ERR_INVALID_STATE, "Ogre should never hit this path",
+                                "GL3PlusTextureGpuManager::initialise" );
+                    break;
+                case TextureTypes::Type1D:
+                    gl3LegacyTexStorage1D( targets[i], 1, GL_RGBA8, 4,
+                                           GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV );
+                    OCGE( glTexSubImage1D( targets[i], 0, 0, 4, GL_RGBA,
+                                        GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
+                    break;
+                case TextureTypes::Type1DArray:
+                    gl3LegacyTexStorage2D( targets[i], 1, GL_RGBA8, 4, 1,
+                                           GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV );
+                    OCGE( glTexSubImage2D( targets[i], 0, 0, 0, 4, 1, GL_RGBA,
+                                           GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
+                    break;
+                case TextureTypes::Type2D:
+                    gl3LegacyTexStorage2D( targets[i], 1, GL_RGBA8, 4, 4,
+                                           GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV );
+                    OCGE( glTexSubImage2D( targets[i], 0, 0, 0, 4, 4, GL_RGBA,
+                                           GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
+                    break;
+                case TextureTypes::TypeCube:
+                    gl3LegacyTexStorage2D( targets[i], 1, GL_RGBA8, 4, 4,
+                                           GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV);
+                    for( int j=0; j<6; ++j )
+                    {
+                        OCGE( glTexSubImage2D( GL_TEXTURE_CUBE_MAP_POSITIVE_X + j, 0, 0, 0, 4, 4, GL_RGBA,
+                                               GL_UNSIGNED_INT_8_8_8_8_REV, c_blackData ) );
+                    }
+                    break;
+                case TextureTypes::TypeCubeArray:
+                    gl3LegacyTexStorage3D( targets[i], 1, GL_RGBA8, 4, 4, 6,
+                                           GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV );
+                    OCGE( glTexSubImage3D( targets[i], 0, 0, 0, 0, 4, 4, 6, GL_RGBA,
+                                           GL_UNSIGNED_INT_8_8_8_8_REV, c_blackData ) );
+                    break;
+                case TextureTypes::Type2DArray:
+                case TextureTypes::Type3D:
+                    gl3LegacyTexStorage3D( targets[i], 1, GL_RGBA8, 4, 4, 4,
+                                           GL_RGBA, GL_UNSIGNED_INT_8_8_8_8_REV );
+                    OCGE( glTexSubImage3D( targets[i], 0, 0, 0, 0, 4, 4, 4, GL_RGBA,
+                                           GL_UNSIGNED_INT_8_8_8_8_REV, c_whiteData ) );
+                    break;
+                }
             }
         }
 
         OCGE( glGenFramebuffers( 2u, mTmpFbo ) );
     }
-    //-----------------------------------------------------------------------------------
-    GL3PlusTextureGpuManager::~GL3PlusTextureGpuManager()
-    {
-        destroyAll();
-
-        OCGE( glDeleteFramebuffers( 2u, mTmpFbo ) );
-        memset( mTmpFbo, 0, sizeof(mTmpFbo) );
-
-        OCGE( glDeleteTextures( TextureTypes::Type3D - 1u, &mBlankTexture[1u] ) );
-        memset( mBlankTexture, 0, sizeof(mBlankTexture) );
-    }
-    //-----------------------------------------------------------------------------------
+    //-----------------------------------------------------------------------------------    //-----------------------------------------------------------------------------------
     TextureGpu* GL3PlusTextureGpuManager::createTextureGpuWindow( GL3PlusContext *context,
                                                                   Window *window )
     {

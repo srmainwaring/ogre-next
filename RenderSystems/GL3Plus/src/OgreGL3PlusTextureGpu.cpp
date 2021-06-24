@@ -30,10 +30,12 @@ THE SOFTWARE.
 #include "OgreGL3PlusMappings.h"
 #include "OgreGL3PlusTextureGpuManager.h"
 #include "OgreGL3PlusSupport.h"
+#include "OgreGL3PlusLegacy.h"
 
 #include "OgreTextureGpuListener.h"
 #include "OgreTextureBox.h"
 #include "OgreVector2.h"
+#include "OgreStagingTexture.h"
 
 #include "Vao/OgreVaoManager.h"
 #include "OgreRenderSystem.h"
@@ -68,7 +70,7 @@ namespace Ogre
     //-----------------------------------------------------------------------------------
     void GL3PlusTextureGpu::createInternalResourcesImpl(void)
     {
-        GLenum format = GL3PlusMappings::get( mPixelFormat );
+        GLenum internalFormat = GL3PlusMappings::get( mPixelFormat );
 
         if( !isMultisample() || !hasMsaaExplicitResolves() )
         {
@@ -94,41 +96,175 @@ namespace Ogre
                 OCGE( glTexParameteri( mGlTextureTarget, GL_TEXTURE_SWIZZLE_A, GL_RED ) );
             }
 
-            switch( mTextureType )
+            // check capabilities
+            auto *textureManager = getTextureManager();
+            auto *textureManagerGL =
+                    static_cast<GL3PlusTextureGpuManager*>(textureManager);
+            auto &support = textureManagerGL->getGlSupport();
+            bool hasGL42 = support.hasMinGLVersion(4, 2);
+            bool hasARBTextureStorage = support.checkExtension("GL_ARB_texture_storage");
+
+            if (hasGL42 || hasARBTextureStorage)
             {
-            case TextureTypes::Unknown:
-                OGRE_EXCEPT( Exception::ERR_INVALID_STATE,
-                             "Texture '" + getNameStr() + "': "
-                             "Ogre should never hit this path",
-                             "GL3PlusTextureGpu::createInternalResourcesImpl" );
-                break;
-            case TextureTypes::Type1D:
-                OCGE( glTexStorage1D( GL_TEXTURE_1D, GLsizei(mNumMipmaps), format, GLsizei(mWidth) ) );
-                break;
-            case TextureTypes::Type1DArray:
-                OCGE( glTexStorage2D( GL_TEXTURE_1D_ARRAY, GLsizei(mNumMipmaps), format,
-                                      GLsizei(mWidth), GLsizei(mDepthOrSlices) ) );
-                break;
-            case TextureTypes::Type2D:
-                OCGE( glTexStorage2D( GL_TEXTURE_2D, GLsizei(mNumMipmaps), format,
-                                      GLsizei(mWidth), GLsizei(mHeight) ) );
-                break;
-            case TextureTypes::Type2DArray:
-                OCGE( glTexStorage3D( GL_TEXTURE_2D_ARRAY, GLsizei(mNumMipmaps), format,
-                                      GLsizei(mWidth), GLsizei(mHeight), GLsizei(mDepthOrSlices) ) );
-                break;
-            case TextureTypes::TypeCube:
-                OCGE( glTexStorage2D( GL_TEXTURE_CUBE_MAP, GLsizei(mNumMipmaps), format,
-                                      GLsizei(mWidth), GLsizei(mHeight) ) );
-                break;
-            case TextureTypes::TypeCubeArray:
-                OCGE( glTexStorage3D( GL_TEXTURE_CUBE_MAP_ARRAY, GLsizei(mNumMipmaps), format,
-                                      GLsizei(mWidth), GLsizei(mHeight), GLsizei(mDepthOrSlices) ) );
-                break;
-            case TextureTypes::Type3D:
-                OCGE( glTexStorage3D( GL_TEXTURE_3D, GLsizei(mNumMipmaps), format,
-                                      GLsizei(mWidth), GLsizei(mHeight), GLsizei(mDepthOrSlices) ) );
-                break;
+                switch( mTextureType )
+                {
+                case TextureTypes::Unknown:
+                    OGRE_EXCEPT( Exception::ERR_INVALID_STATE,
+                                "Texture '" + getNameStr() + "': "
+                                "Ogre should never hit this path",
+                                "GL3PlusTextureGpu::createInternalResourcesImpl" );
+                    break;
+                case TextureTypes::Type1D:
+                    OCGE( glTexStorage1D( GL_TEXTURE_1D, GLsizei(mNumMipmaps), internalFormat, GLsizei(mWidth) ) );
+                    break;
+                case TextureTypes::Type1DArray:
+                    OCGE( glTexStorage2D( GL_TEXTURE_1D_ARRAY, GLsizei(mNumMipmaps), internalFormat,
+                                          GLsizei(mWidth), GLsizei(mDepthOrSlices) ) );
+                    break;
+                case TextureTypes::Type2D:
+                    OCGE( glTexStorage2D( GL_TEXTURE_2D, GLsizei(mNumMipmaps), internalFormat,
+                                          GLsizei(mWidth), GLsizei(mHeight) ) );
+                   break;
+                case TextureTypes::Type2DArray:
+                    OCGE( glTexStorage3D( GL_TEXTURE_2D_ARRAY, GLsizei(mNumMipmaps), internalFormat,
+                                          GLsizei(mWidth), GLsizei(mHeight), GLsizei(mDepthOrSlices) ) );
+                    break;
+                case TextureTypes::TypeCube:
+                    OCGE( glTexStorage2D( GL_TEXTURE_CUBE_MAP, GLsizei(mNumMipmaps), internalFormat,
+                                          GLsizei(mWidth), GLsizei(mHeight) ) );
+                    break;
+                case TextureTypes::TypeCubeArray:
+                    OCGE( glTexStorage3D( GL_TEXTURE_CUBE_MAP_ARRAY, GLsizei(mNumMipmaps), internalFormat,
+                                          GLsizei(mWidth), GLsizei(mHeight), GLsizei(mDepthOrSlices) ) );
+                    break;
+                case TextureTypes::Type3D:
+                    OCGE( glTexStorage3D( GL_TEXTURE_3D, GLsizei(mNumMipmaps), internalFormat,
+                                          GLsizei(mWidth), GLsizei(mHeight), GLsizei(mDepthOrSlices) ) );
+                    break;
+                }
+            }
+            // Fallback from Deprecated/GL3PlusTexture::createInternalResourcesImpl
+            else
+            {
+                // Check if format is compressed
+                if (PixelFormatGpuUtils::isCompressed(mPixelFormat))
+                {
+                    // Compressed formats
+                    GLsizei width = GLsizei(mWidth);
+                    GLsizei height = GLsizei(mHeight);
+
+                    // TODO_CHECK_CALC
+                    GLsizei depth = GLsizei(mDepthOrSlices);
+                    GLsizei slices = 1;
+
+                    for (uint8 mip = 0; mip <= mNumMipmaps; mip++)
+                    {
+                        GLsizei size = static_cast<GLsizei>(PixelFormatGpuUtils::getSizeBytes(
+                            width, height, depth, slices, mPixelFormat));
+
+                        switch(mTextureType)
+                        {
+                        case TextureTypes::Type1D:
+                            OCGE(glCompressedTexImage1D(GL_TEXTURE_1D, mip, internalFormat,
+                                                        width, 0,
+                                                        size, NULL));
+                            break;
+                        case TextureTypes::Type2D:
+                            OCGE(glCompressedTexImage2D(GL_TEXTURE_2D,
+                                                        mip,
+                                                        internalFormat,
+                                                        width, height,
+                                                        0,
+                                                        size,
+                                                        NULL));
+                            break;
+                        case TextureTypes::Type2DArray:
+                            OCGE(glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, mip, internalFormat,
+                                                        width, height, depth, 0,
+                                                        size, NULL));
+                            break;
+                        case TextureTypes::Type3D:
+                            OCGE(glCompressedTexImage3D(GL_TEXTURE_3D, mip, internalFormat,
+                                                        width, height, depth, 0,
+                                                        size, NULL));
+                            break;
+                        case TextureTypes::TypeCube:
+                            for(int face = 0; face < 6; face++)
+                            {
+                                OCGE(glCompressedTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+                                                            mip, internalFormat,
+                                                            width, height, 0,
+                                                            size / depth, NULL));
+                            }
+                            break;
+                        default:
+                            break;
+                        };
+
+                        if (width > 1)
+                        {
+                            width = width / 2;
+                        }
+                        if (height > 1)
+                        {
+                            height = height / 2;
+                        }
+                        if (depth > 1 && mTextureType != TextureTypes::Type2DArray)
+                        {
+                            depth = depth / 2;
+                        }
+                    }
+                }
+                else
+                {
+                    // Format must not be compressed when calling getFormatAndType
+                    GLenum format, type;
+                    GL3PlusMappings::getFormatAndType( mPixelFormat, format, type );
+
+                    switch( mTextureType )
+                    {
+                    case TextureTypes::Unknown:
+                        OGRE_EXCEPT( Exception::ERR_INVALID_STATE,
+                                    "Texture '" + getNameStr() + "': "
+                                    "Ogre should never hit this path",
+                                    "GL3PlusTextureGpu::createInternalResourcesImpl" );
+                        break;
+                    case TextureTypes::Type1D:
+                        gl3LegacyTexStorage1D( GL_TEXTURE_1D, GLsizei(mNumMipmaps), internalFormat, GLsizei(mWidth),
+                                               format, type );
+                        break;
+                    case TextureTypes::Type1DArray:
+                        gl3LegacyTexStorage2D( GL_TEXTURE_1D_ARRAY, GLsizei(mNumMipmaps), internalFormat,
+                                               GLsizei(mWidth), GLsizei(mDepthOrSlices),
+                                               format, type );
+                        break;
+                    case TextureTypes::Type2D:
+                        gl3LegacyTexStorage2D( GL_TEXTURE_2D, GLsizei(mNumMipmaps), internalFormat,
+                                               GLsizei(mWidth), GLsizei(mHeight),
+                                               format, type );
+                        break;
+                    case TextureTypes::Type2DArray:
+                        gl3LegacyTexStorage3D( GL_TEXTURE_2D_ARRAY, GLsizei(mNumMipmaps), internalFormat,
+                                               GLsizei(mWidth), GLsizei(mHeight), GLsizei(mDepthOrSlices),
+                                               format, type );
+                        break;
+                    case TextureTypes::TypeCube:
+                        gl3LegacyTexStorage2D( GL_TEXTURE_CUBE_MAP, GLsizei(mNumMipmaps), internalFormat,
+                                               GLsizei(mWidth), GLsizei(mHeight),
+                                               format, type );
+                        break;
+                    case TextureTypes::TypeCubeArray:
+                        gl3LegacyTexStorage3D( GL_TEXTURE_CUBE_MAP_ARRAY, GLsizei(mNumMipmaps), internalFormat,
+                                               GLsizei(mWidth), GLsizei(mHeight), GLsizei(mDepthOrSlices),
+                                               format, type );
+                        break;
+                    case TextureTypes::Type3D:
+                        gl3LegacyTexStorage3D( GL_TEXTURE_3D, GLsizei(mNumMipmaps), internalFormat,
+                                               GLsizei(mWidth), GLsizei(mHeight), GLsizei(mDepthOrSlices),
+                                               format, type );
+                        break;
+                    }
+                }
             }
 
             //Allocate internal buffers for automipmaps before we load anything into them
@@ -152,7 +288,7 @@ namespace Ogre
                 OCGE( glGenRenderbuffers( 1, &mMsaaFramebufferName ) );
                 OCGE( glBindRenderbuffer( GL_RENDERBUFFER, mMsaaFramebufferName ) );
                 OCGE( glRenderbufferStorageMultisample( GL_RENDERBUFFER,
-                                                        mSampleDescription.getColourSamples(), format,
+                                                        mSampleDescription.getColourSamples(), internalFormat,
                                                         GLsizei(mWidth), GLsizei(mHeight) ) );
                 OCGE( glBindRenderbuffer( GL_RENDERBUFFER, 0 ) );
 
@@ -186,13 +322,13 @@ namespace Ogre
                 if( mTextureType == TextureTypes::Type2D )
                 {
                     glTexImage2DMultisample( mGlTextureTarget, mSampleDescription.getColourSamples(),
-                                             format, GLsizei( mWidth ), GLsizei( mHeight ),
+                                             internalFormat, GLsizei( mWidth ), GLsizei( mHeight ),
                                              fixedsamplelocations );
                 }
                 else
                 {
                     glTexImage3DMultisample( mGlTextureTarget, mSampleDescription.getColourSamples(),
-                                             format, GLsizei( mWidth ), GLsizei( mHeight ),
+                                             internalFormat, GLsizei( mWidth ), GLsizei( mHeight ),
                                              GLsizei( mDepthOrSlices ), fixedsamplelocations );
                 }
 

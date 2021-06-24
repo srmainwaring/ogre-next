@@ -46,6 +46,9 @@ namespace Ogre
     */
     class _OgreGL3PlusExport GL3PlusTextureGpuManager : public TextureGpuManager
     {
+    private:
+        void _initialise();
+
     protected:
         /// 4x4 texture for when we have nothing to display.
         GLuint  mBlankTexture[TextureTypes::Type3D + 1u];
