@@ -29,6 +29,7 @@ if( OGRE_GLSUPPORT_USE_WGL )
 endif()
 
 if( OGRE_GLSUPPORT_USE_COCOA )
+    add_definitions(-DGL_SILENCE_DEPRECATION)
 	file(GLOB PLATFORM_HEADERS "include/windowing/OSX/*.h" "src/windowing/OSX/*.h")
 	file(GLOB PLATFORM_SOURCES "src/windowing/OSX/*.mm")
 	set( PLATFORM_HEADERS_OSX ${PLATFORM_HEADERS} )
